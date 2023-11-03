@@ -11,6 +11,8 @@ REFER DOCUMENTATION FOR MORE DETAILS ON FUNSTIONS AND THEIR FUNCTIONALITY
 // add other headers as required
 #include<stdio.h>
 #include<stdlib.h>
+#include <unistd.h>
+#include <sys/mman.h>
 
 
 /*
@@ -19,6 +21,23 @@ As PAGESIZE can differ system to system we should have flexibility to modify thi
 macro to make the output of all system same and conduct a fair evaluation. 
 */
 #define PAGE_SIZE 4096
+#define PROCESS 1
+#define HOLE 0
+
+struct SubChainNode {
+    size_t size;
+    int type;
+    struct SubChainNode* next;
+    struct SubChainNode* prev;
+};
+
+struct MainChainNode {
+    struct SubChainNode* subChain;
+    struct MainChainNode* next;
+    struct MainChainNode* prev;
+};
+static struct MainChainNode* head = NULL;
+static unsigned long startingVirtualAddress = 0;
 
 
 /*
@@ -30,7 +49,8 @@ Input Parameter: Nothing
 Returns: Nothing
 */
 void mems_init(){
-    
+    head = NULL;
+    startingVirtualAddress=0;
 }
 
 
@@ -58,7 +78,44 @@ Parameter: The size of the memory the user program wants
 Returns: MeMS Virtual address (that is created by MeMS)
 */ 
 void* mems_malloc(size_t size){
+    struct MainChainNode* currentNode = head;
 
+    while (currentNode!=NULL)
+    {
+        struct SubChainNode* subChain = currentNode->subChain;
+        while(subChain!=NULL){
+            if(subChain->type==HOLE && subChain->size>=size){
+                subChain->type=PROCESS;
+                return (void*)((unsigned long)startingVirtualAddress+(unsigned long)subChain);
+            }
+            subChain=subChain->next;
+        }
+        currentNode=currentNode->next;
+    }
+    
+    size_t pages =(size + PAGE_SIZE - 1)/PAGE_SIZE;
+    size_t totalSize = pages * PAGE_SIZE;
+
+    void* mem= mmap(NULL, totalSize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    
+    if(mem == MAP_FAILED){
+        printf("MAP FAILED");
+        return NULL;
+    }
+
+    struct MainChainNode* newMainChainNode = (struct MainChainNode*)mem;
+    newMainChainNode->subChain = (struct SubChainNode*)((unsigned long)mem + sizeof(struct MainChainNode));
+    newMainChainNode->subChain->size = totalSize-sizeof(struct MainChainNode);
+    newMainChainNode->subChain->type=PROCESS;
+
+    newMainChainNode->next=head;
+    newMainChainNode->prev=NULL;
+    if(head!=NULL){
+        head->prev = newMainChainNode;
+    }
+    head=newMainChainNode;
+
+    return (void*)((unsigned long)startingVirtualAddress + (unsigned long)newMainChainNode->subChain);
 }
 
 
